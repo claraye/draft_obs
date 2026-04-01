@@ -154,6 +154,185 @@ def decompose_returns(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# 1b. TIME-SERIES DECOMPOSITION  (rolling OLS per asset)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def decompose_returns_ts(
+    returns_df: pd.DataFrame,
+    cot_df: pd.DataFrame,
+    window: int = 52,
+    min_periods: int = 26,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    For each asset i, run a rolling time-series OLS over a lookback window:
+        R_{i,t} = b0_{i,t} + b1_{i,t} * Q_{i,t} + eps_{i,t}
+
+    Q_fitted_{i,t}  = b1_{i,t} * Q_{i,t}            (flow component)
+    R_nonQ_{i,t}    = R_{i,t} - Q_fitted_{i,t}       (orthogonal component)
+
+    Unlike the cross-sectional version (which pools assets at each t), this
+    version estimates a separate beta per asset using its own return history,
+    allowing each commodity to have a distinct Q sensitivity.
+
+    Parameters
+    ----------
+    returns_df  : (T x N) weekly returns
+    cot_df      : (T x N) weekly Q (net speculator flow / OI), aligned
+    window      : rolling window length in weeks (default 52)
+    min_periods : minimum observations required to produce an estimate
+
+    Returns
+    -------
+    Q_fitted_df : DataFrame  — flow-driven return component
+    R_nonQ_df   : DataFrame  — orthogonal return component
+    betas_df    : DataFrame  — rolling b1_{i,t} for each asset
+    """
+    assert returns_df.shape == cot_df.shape
+    assert (returns_df.index == cot_df.index).all()
+    assert (returns_df.columns == cot_df.columns).all()
+
+    Q_fitted_df = pd.DataFrame(np.nan, index=returns_df.index, columns=returns_df.columns)
+    R_nonQ_df   = pd.DataFrame(np.nan, index=returns_df.index, columns=returns_df.columns)
+    betas_df    = pd.DataFrame(np.nan, index=returns_df.index, columns=returns_df.columns)
+
+    for i, asset in enumerate(returns_df.columns):
+        R_i = returns_df[asset]
+        Q_i = cot_df[asset]
+
+        for t_idx in range(len(returns_df)):
+            # rolling window ending at t_idx (inclusive)
+            start = max(0, t_idx - window + 1)
+            R_win = R_i.iloc[start : t_idx + 1]
+            Q_win = Q_i.iloc[start : t_idx + 1]
+
+            mask = R_win.notna() & Q_win.notna()
+            if mask.sum() < min_periods:
+                continue
+
+            b1, b0, _, _, _ = stats.linregress(Q_win[mask], R_win[mask])
+            t = returns_df.index[t_idx]
+
+            q_fit = b1 * Q_i.loc[t]
+            Q_fitted_df.loc[t, asset] = q_fit
+            R_nonQ_df.loc[t, asset]   = R_i.loc[t] - q_fit
+            betas_df.loc[t, asset]    = b1
+
+    return Q_fitted_df, R_nonQ_df, betas_df
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 1c. ROLLING PANEL DECOMPOSITION  (pooled OLS across assets × weeks in window)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def decompose_returns_panel(
+    returns_df: pd.DataFrame,
+    cot_df: pd.DataFrame,
+    window: int = 52,
+    min_obs: int = 100,
+    fixed_effects: str = "none",
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series]:
+    """
+    For each week t, stack all (asset, week) observations within a rolling
+    lookback window and run a single pooled OLS:
+
+        R_{i,s} = b0 + b1_t * Q_{i,s} + [FE] + eps_{i,s}
+                  for all i, s in [t-window+1, t]
+
+    Q_fitted_{i,t}  = b1_t * Q_{i,t}            (flow component, current week)
+    R_nonQ_{i,t}    = R_{i,t} - Q_fitted_{i,t}  (orthogonal component)
+
+    A single beta b1_t is estimated from the full panel in the window and then
+    applied to the current week's Q to produce the decomposition. This pools
+    information across both the time and cross-sectional dimensions, giving a
+    more stable beta estimate than either the pure cross-sectional or pure
+    time-series versions.
+
+    Parameters
+    ----------
+    returns_df    : (T x N) weekly returns
+    cot_df        : (T x N) weekly Q (net speculator flow / OI), aligned
+    window        : rolling window in weeks (default 52)
+    min_obs       : minimum pooled observations required (default 100)
+    fixed_effects : 'none'  — pooled OLS, no FE
+                    'asset' — demean each asset's R and Q within the window
+                              (within-estimator; removes asset-level intercepts)
+                    'time'  — demean each week's R and Q within the window
+                              (absorbs common weekly shocks)
+
+    Returns
+    -------
+    Q_fitted_df : DataFrame  — flow-driven return component
+    R_nonQ_df   : DataFrame  — orthogonal return component
+    betas       : Series     — rolling pooled b1_t for each week t
+    """
+    assert returns_df.shape == cot_df.shape
+    assert (returns_df.index == cot_df.index).all()
+    assert (returns_df.columns == cot_df.columns).all()
+    assert fixed_effects in ("none", "asset", "time"), \
+        "fixed_effects must be 'none', 'asset', or 'time'"
+
+    Q_fitted_df = pd.DataFrame(np.nan, index=returns_df.index, columns=returns_df.columns)
+    R_nonQ_df   = pd.DataFrame(np.nan, index=returns_df.index, columns=returns_df.columns)
+    beta_rows   = {}
+
+    for t_idx, t in enumerate(returns_df.index):
+        # ── 1. stack window into long format ──────────────────────────────────
+        start = max(0, t_idx - window + 1)
+        R_win = returns_df.iloc[start : t_idx + 1]   # (window x N)
+        Q_win = cot_df.iloc[start : t_idx + 1]
+
+        # melt to (obs x 2): drop any row with NaN in either series
+        R_long = R_win.stack()
+        Q_long = Q_win.stack()
+        both   = pd.concat([R_long, Q_long], axis=1, keys=["R", "Q"]).dropna()
+
+        if len(both) < min_obs:
+            continue
+
+        R_vec = both["R"].values
+        Q_vec = both["Q"].values
+
+        # ── 2. apply fixed effects via demeaning ──────────────────────────────
+        if fixed_effects == "asset":
+            asset_idx = both.index.get_level_values(1)
+            for asset in asset_idx.unique():
+                sel = asset_idx == asset
+                R_vec[sel] -= R_vec[sel].mean()
+                Q_vec[sel] -= Q_vec[sel].mean()
+
+        elif fixed_effects == "time":
+            time_idx = both.index.get_level_values(0)
+            for week in time_idx.unique():
+                sel = time_idx == week
+                R_vec[sel] -= R_vec[sel].mean()
+                Q_vec[sel] -= Q_vec[sel].mean()
+
+        # ── 3. pooled OLS: slope only (intercept absorbed by FE or left in) ──
+        if fixed_effects == "none":
+            b1, b0, _, _, _ = stats.linregress(Q_vec, R_vec)
+        else:
+            # after demeaning, regress through origin for the within estimator
+            b1 = (Q_vec @ R_vec) / (Q_vec @ Q_vec) if (Q_vec @ Q_vec) > 0 else np.nan
+
+        if np.isnan(b1):
+            continue
+
+        beta_rows[t] = b1
+
+        # ── 4. apply current-week beta to current-week Q ──────────────────────
+        Q_t = cot_df.loc[t]
+        R_t = returns_df.loc[t]
+        q_fit  = b1 * Q_t
+        r_nonq = R_t - q_fit
+
+        Q_fitted_df.loc[t] = q_fit.values
+        R_nonQ_df.loc[t]   = r_nonq.values
+
+    betas = pd.Series(beta_rows, name="b1_panel")
+    return Q_fitted_df, R_nonQ_df, betas
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # 2.  FAMA-MACBETH PREDICTIVE REGRESSION  (with Newey-West SEs)
 # ══════════════════════════════════════════════════════════════════════════════
 
