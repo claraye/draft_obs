@@ -1,0 +1,28 @@
+# Network Momentum Replication — Python dependencies
+# Paper: arXiv:2308.11294 (Pu, Roberts, Dong, Zohren, 2023)
+
+# Core
+numpy>=1.24
+pandas>=2.0
+scipy>=1.10
+
+# Data
+yfinance>=0.2.30
+
+# Graph learning (convex optimisation)
+cvxpy>=1.4           # Modelling layer
+clarabel>=0.6        # Fast interior-point solver (open-source MOSEK alternative)
+# mosek              # Fastest solver; requires license (free academic license at mosek.com)
+
+# Plotting
+matplotlib>=3.7
+
+# Optional: accelerate numerical operations
+# numba>=0.57
+
+# Install all:
+#   pip install -r requirements.txt
+#
+# For MOSEK (recommended for speed):
+#   pip install mosek
+#   then obtain a free academic license at: https://www.mosek.com/products/academic-licenses/

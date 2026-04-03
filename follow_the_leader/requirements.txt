@@ -1,0 +1,29 @@
+# Follow The Leader Replication — Python dependencies
+# Paper: "Follow The Leader: Enhancing Systematic Trend-Following Using Network Momentum"
+# Authors: Linze Li, William Ferreira (Imperial College / UCL, January 2025)
+
+# Core
+numpy>=1.24
+pandas>=2.0
+scipy>=1.10
+
+# Data
+yfinance>=0.2.30
+
+# Graph learning (convex QP)
+cvxpy>=1.4
+clarabel>=0.6          # Open-source interior-point solver
+
+# Plotting
+matplotlib>=3.7
+
+# Optional — strongly recommended for DTW speed:
+#   pip install dtaidistance    # C-accelerated DTW warping paths (~100x faster)
+#   pip install numba>=0.57     # JIT compilation fallback
+#   pip install mosek           # Fastest QP solver (free academic license at mosek.com)
+
+# Install all:
+#   pip install -r requirements.txt
+#
+# Minimal fast install (skips dtw variants, uses xcorr or levy only):
+#   pip install numpy pandas scipy yfinance cvxpy clarabel matplotlib
