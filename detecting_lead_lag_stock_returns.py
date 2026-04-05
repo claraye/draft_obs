@@ -50,6 +50,8 @@ class BacktestConfig:
     leader_frac: float = 0.2
     follower_frac: float = 0.2
     max_lag: int = 5
+    corr_score_mode: str = "absolute_strength"
+    trade_lag: int = 1
     rebalance_every: int = 1
     transaction_cost_bps: float = 0.0
     min_valid_obs: int = 40
@@ -155,11 +157,79 @@ def _corr_at_positive_lag(x: np.ndarray, y: np.ndarray, lag: int) -> float:
     return float(np.corrcoef(left, right)[0, 1])
 
 
-def c1_score(row_asset: np.ndarray, col_asset: np.ndarray, max_lag: int) -> float:
+def _best_signed_by_abs(values: list[float]) -> float:
+    finite = np.asarray([v for v in values if np.isfinite(v)], dtype=float)
+    if finite.size == 0:
+        return 0.0
+    return float(finite[np.argmax(np.abs(finite))])
+
+
+def c1_components(row_asset: np.ndarray, col_asset: np.ndarray, max_lag: int) -> dict[str, float]:
+    """
+    Separate direction-of-leadership from sign-of-predictive-relation.
+
+    Returns:
+      strength: positive if col leads row, negative if row leads col
+      forward_relation_sign: sign of the strongest col->row lagged correlation
+      reverse_relation_sign: sign of the strongest row->col lagged correlation
+    """
+    forward = [
+        _corr_at_positive_lag(row_asset, col_asset, lag)
+        for lag in range(1, max_lag + 1)
+    ]
+    reverse = [
+        _corr_at_positive_lag(col_asset, row_asset, lag)
+        for lag in range(1, max_lag + 1)
+    ]
+    forward_best = _best_signed_by_abs(forward)
+    reverse_best = _best_signed_by_abs(reverse)
+    return {
+        "strength": float(abs(forward_best) - abs(reverse_best)),
+        "forward_relation_sign": float(np.sign(forward_best)),
+        "reverse_relation_sign": float(np.sign(reverse_best)),
+        "forward_best_corr": float(forward_best),
+        "reverse_best_corr": float(reverse_best),
+    }
+
+
+def c1_score(
+    row_asset: np.ndarray,
+    col_asset: np.ndarray,
+    max_lag: int,
+    mode: str = "absolute_strength",
+) -> float:
     """
     Positive score means the column asset leads the row asset.
-    C1 is approximated as best positive-lag correlation in the col->row direction
-    minus the best positive-lag correlation in the reverse direction.
+
+    This scalar is now a pure leadership-strength score based on absolute
+    lagged dependence. Momentum-vs-reversal sign is preserved separately in
+    `c1_components`, rather than being mixed into the direction score.
+    """
+    if mode == "absolute_strength":
+        return c1_components(row_asset, col_asset, max_lag=max_lag)["strength"]
+    if mode == "signed_correlation":
+        forward = [
+            _corr_at_positive_lag(row_asset, col_asset, lag)
+            for lag in range(1, max_lag + 1)
+        ]
+        reverse = [
+            _corr_at_positive_lag(col_asset, row_asset, lag)
+            for lag in range(1, max_lag + 1)
+        ]
+        forward_best = np.nanmax(forward) if np.isfinite(forward).any() else 0.0
+        reverse_best = np.nanmax(reverse) if np.isfinite(reverse).any() else 0.0
+        return float(forward_best - reverse_best)
+    raise ValueError(f"Unknown corr_score_mode for c1: {mode}")
+
+
+def c2_components(row_asset: np.ndarray, col_asset: np.ndarray, max_lag: int) -> dict[str, float]:
+    """
+    Average-directional version of the same separation.
+
+    Returns:
+      strength: positive if col leads row, negative if row leads col
+      forward_relation_sign: sign of the average col->row lagged correlation
+      reverse_relation_sign: sign of the average row->col lagged correlation
     """
     forward = [
         _corr_at_positive_lag(row_asset, col_asset, lag)
@@ -169,24 +239,50 @@ def c1_score(row_asset: np.ndarray, col_asset: np.ndarray, max_lag: int) -> floa
         _corr_at_positive_lag(col_asset, row_asset, lag)
         for lag in range(1, max_lag + 1)
     ]
-    forward_best = np.nanmax(forward) if np.isfinite(forward).any() else 0.0
-    reverse_best = np.nanmax(reverse) if np.isfinite(reverse).any() else 0.0
-    return float(forward_best - reverse_best)
+    forward_finite = np.asarray([v for v in forward if np.isfinite(v)], dtype=float)
+    reverse_finite = np.asarray([v for v in reverse if np.isfinite(v)], dtype=float)
+
+    forward_mean = float(np.mean(forward_finite)) if forward_finite.size else 0.0
+    reverse_mean = float(np.mean(reverse_finite)) if reverse_finite.size else 0.0
+    forward_strength = float(np.mean(np.abs(forward_finite))) if forward_finite.size else 0.0
+    reverse_strength = float(np.mean(np.abs(reverse_finite))) if reverse_finite.size else 0.0
+    return {
+        "strength": float(forward_strength - reverse_strength),
+        "forward_relation_sign": float(np.sign(forward_mean)),
+        "reverse_relation_sign": float(np.sign(reverse_mean)),
+        "forward_mean_corr": float(forward_mean),
+        "reverse_mean_corr": float(reverse_mean),
+    }
 
 
-def c2_score(row_asset: np.ndarray, col_asset: np.ndarray, max_lag: int) -> float:
-    """Average directional cross-correlation difference, positive if col leads row."""
-    forward = [
-        _corr_at_positive_lag(row_asset, col_asset, lag)
-        for lag in range(1, max_lag + 1)
-    ]
-    reverse = [
-        _corr_at_positive_lag(col_asset, row_asset, lag)
-        for lag in range(1, max_lag + 1)
-    ]
-    forward_mean = np.nanmean(forward) if np.isfinite(forward).any() else 0.0
-    reverse_mean = np.nanmean(reverse) if np.isfinite(reverse).any() else 0.0
-    return float(forward_mean - reverse_mean)
+def c2_score(
+    row_asset: np.ndarray,
+    col_asset: np.ndarray,
+    max_lag: int,
+    mode: str = "absolute_strength",
+) -> float:
+    """
+    Positive score means the column asset leads the row asset.
+
+    This scalar uses average absolute lagged dependence for direction, while
+    `c2_components` preserves whether the average relation is momentum-like or
+    reversal-like.
+    """
+    if mode == "absolute_strength":
+        return c2_components(row_asset, col_asset, max_lag=max_lag)["strength"]
+    if mode == "signed_correlation":
+        forward = [
+            _corr_at_positive_lag(row_asset, col_asset, lag)
+            for lag in range(1, max_lag + 1)
+        ]
+        reverse = [
+            _corr_at_positive_lag(col_asset, row_asset, lag)
+            for lag in range(1, max_lag + 1)
+        ]
+        forward_mean = np.nanmean(forward) if np.isfinite(forward).any() else 0.0
+        reverse_mean = np.nanmean(reverse) if np.isfinite(reverse).any() else 0.0
+        return float(forward_mean - reverse_mean)
+    raise ValueError(f"Unknown corr_score_mode for c2: {mode}")
 
 
 def levy_area_score(row_asset: np.ndarray, col_asset: np.ndarray) -> float:
@@ -210,11 +306,57 @@ def levy_area_score(row_asset: np.ndarray, col_asset: np.ndarray) -> float:
     return float(-area / len(x))
 
 
+def follower_relation_signals(
+    window_df: pd.DataFrame,
+    leaders: list[str],
+    followers: list[str],
+    method: str,
+    max_lag: int,
+    corr_score_mode: str,
+) -> dict[str, float]:
+    """
+    Estimate the momentum-vs-reversal sign from leaders to each follower.
+
+    Returns a per-follower sign in {-1, +1}. For methods that do not support a
+    clean sign separation (e.g. levy, or signed_correlation mode), this falls
+    back to +1 for every follower so the original continuation-style trading
+    logic is preserved.
+    """
+    if method not in {"c1", "c2"} or corr_score_mode != "absolute_strength":
+        return {follower: 1.0 for follower in followers}
+
+    signs: dict[str, float] = {}
+    for follower in followers:
+        relation_values = []
+        row_asset = window_df[follower].to_numpy(dtype=float)
+        for leader in leaders:
+            col_asset = window_df[leader].to_numpy(dtype=float)
+            if method == "c1":
+                relation = c1_components(row_asset, col_asset, max_lag=max_lag)[
+                    "forward_relation_sign"
+                ]
+            else:
+                relation = c2_components(row_asset, col_asset, max_lag=max_lag)[
+                    "forward_relation_sign"
+                ]
+            if np.isfinite(relation) and relation != 0:
+                relation_values.append(float(relation))
+
+        if relation_values:
+            signs[follower] = float(np.sign(np.mean(relation_values)))
+            if signs[follower] == 0:
+                signs[follower] = 1.0
+        else:
+            signs[follower] = 1.0
+    return signs
+
+
 def build_lead_lag_matrix(
     window_df: pd.DataFrame,
     method: str,
     max_lag: int,
     min_valid_obs: int,
+    corr_score_mode: str = "absolute_strength",
 ) -> pd.DataFrame:
     z = standardize_window(window_df)
     cols = z.columns.tolist()
@@ -234,9 +376,19 @@ def build_lead_lag_matrix(
                 continue
             col_asset = values[:, j]
             if method == "c1":
-                score = c1_score(row_asset, col_asset, max_lag=max_lag)
+                score = c1_score(
+                    row_asset,
+                    col_asset,
+                    max_lag=max_lag,
+                    mode=corr_score_mode,
+                )
             elif method == "c2":
-                score = c2_score(row_asset, col_asset, max_lag=max_lag)
+                score = c2_score(
+                    row_asset,
+                    col_asset,
+                    max_lag=max_lag,
+                    mode=corr_score_mode,
+                )
             elif method == "levy":
                 score = levy_area_score(row_asset, col_asset)
             else:
@@ -290,11 +442,17 @@ def weights_from_signal(
     followers: list[str],
     market_name: str,
     signal_sign: float,
+    follower_signs: dict[str, float] | None = None,
 ) -> pd.Series:
     if not followers:
         return pd.Series(dtype=float)
-    follower_weight = signal_sign / len(followers)
-    weights = {ticker: follower_weight for ticker in followers}
+    if follower_signs is None:
+        follower_signs = {ticker: 1.0 for ticker in followers}
+    follower_weight = 1.0 / len(followers)
+    weights = {
+        ticker: signal_sign * follower_signs.get(ticker, 1.0) * follower_weight
+        for ticker in followers
+    }
     weights[market_name] = -signal_sign
     return pd.Series(weights, dtype=float)
 
@@ -317,13 +475,18 @@ def run_strategy(
     prev_weights = pd.Series(dtype=float)
     prev_followers: list[str] = []
     prev_leaders: list[str] = []
+    prev_follower_signs: dict[str, float] = {}
 
-    for t_idx in range(config.lookback, len(dates)):
-        date = dates[t_idx]
-        do_rebalance = ((t_idx - config.lookback) % config.rebalance_every) == 0
+    first_signal_idx = config.lookback - 1
+    last_signal_idx = len(dates) - 2 - config.trade_lag
+
+    for t_idx in range(first_signal_idx, last_signal_idx + 1):
+        signal_date = dates[t_idx]
+        return_date = dates[t_idx + 1 + config.trade_lag]
+        do_rebalance = ((t_idx - first_signal_idx) % config.rebalance_every) == 0
 
         if do_rebalance:
-            window_df = returns_df.iloc[t_idx - config.lookback : t_idx]
+            window_df = returns_df.iloc[t_idx - config.lookback + 1 : t_idx + 1]
             universe = window_df.columns[window_df.notna().sum(axis=0) >= config.min_valid_obs].tolist()
 
             if benchmark_characteristic is None:
@@ -332,11 +495,20 @@ def run_strategy(
                     method=method,
                     max_lag=config.max_lag,
                     min_valid_obs=config.min_valid_obs,
+                    corr_score_mode=config.corr_score_mode,
                 )
                 prev_leaders, prev_followers, rank_scores = pick_leaders_followers(
                     score_matrix,
                     leader_frac=config.leader_frac,
                     follower_frac=config.follower_frac,
+                )
+                prev_follower_signs = follower_relation_signals(
+                    window_df=window_df[universe],
+                    leaders=prev_leaders,
+                    followers=prev_followers,
+                    method=method,
+                    max_lag=config.max_lag,
+                    corr_score_mode=config.corr_score_mode,
                 )
                 leader_score = float(rank_scores.loc[prev_leaders].mean()) if prev_leaders else np.nan
                 follower_score = float(rank_scores.loc[prev_followers].mean()) if prev_followers else np.nan
@@ -345,7 +517,7 @@ def run_strategy(
                     raise ValueError("chars_df is required for characteristic benchmarks")
                 prev_leaders, prev_followers = rank_by_characteristic(
                     chars_df=chars_df,
-                    date=dates[t_idx - 1],
+                    date=signal_date,
                     universe=universe,
                     characteristic=benchmark_characteristic,
                     leader_frac=config.leader_frac,
@@ -353,24 +525,26 @@ def run_strategy(
                 )
                 leader_score = np.nan
                 follower_score = np.nan
+                prev_follower_signs = {follower: 1.0 for follower in prev_followers}
 
-            leader_ret_prev = returns_df.loc[dates[t_idx - 1], prev_leaders].mean()
+            leader_ret_prev = returns_df.loc[signal_date, prev_leaders].mean()
             signal_sign = 1.0 if pd.notna(leader_ret_prev) and leader_ret_prev >= 0.0 else -1.0
             current_weights = weights_from_signal(
                 followers=prev_followers,
                 market_name=market_name,
                 signal_sign=signal_sign,
+                follower_signs=prev_follower_signs,
             )
         else:
             current_weights = prev_weights.copy()
             leader_score = np.nan
             follower_score = np.nan
-            leader_ret_prev = returns_df.loc[dates[t_idx - 1], prev_leaders].mean() if prev_leaders else np.nan
+            leader_ret_prev = returns_df.loc[signal_date, prev_leaders].mean() if prev_leaders else np.nan
 
-        asset_ret = returns_df.loc[date, current_weights.index.intersection(returns_df.columns)]
+        asset_ret = returns_df.loc[return_date, current_weights.index.intersection(returns_df.columns)]
         pnl = float((current_weights.loc[asset_ret.index] * asset_ret.fillna(0.0)).sum())
         if market_name in current_weights.index:
-            pnl += float(current_weights[market_name] * market_ret.loc[date])
+            pnl += float(current_weights[market_name] * market_ret.loc[return_date])
 
         all_names = prev_weights.index.union(current_weights.index)
         turnover = (
@@ -379,15 +553,21 @@ def run_strategy(
         ).abs().sum()
         pnl -= config.transaction_cost_bps * 1e-4 * float(turnover)
 
-        portfolio_returns.append((date, pnl))
+        portfolio_returns.append((return_date, pnl))
         diagnostics.append(
             {
-                "date": date,
+                "signal_date": signal_date,
+                "return_date": return_date,
                 "n_leaders": len(prev_leaders),
                 "n_followers": len(prev_followers),
                 "leader_return_prev": leader_ret_prev,
                 "leader_score_mean": leader_score,
                 "follower_score_mean": follower_score,
+                "avg_follower_relation_sign": (
+                    float(np.mean(list(prev_follower_signs.values())))
+                    if prev_follower_signs
+                    else np.nan
+                ),
                 "turnover": float(turnover),
                 "rebalance": do_rebalance,
             }
@@ -396,7 +576,7 @@ def run_strategy(
 
     ret_s = pd.Series(dict(portfolio_returns)).sort_index()
     ret_s.name = method if benchmark_characteristic is None else benchmark_characteristic
-    diag_df = pd.DataFrame(diagnostics).set_index("date")
+    diag_df = pd.DataFrame(diagnostics).set_index("return_date")
     return ret_s, diag_df
 
 
@@ -442,6 +622,8 @@ def run_frequency_sweep(
             leader_frac=base_config.leader_frac,
             follower_frac=base_config.follower_frac,
             max_lag=base_config.max_lag,
+            corr_score_mode=base_config.corr_score_mode,
+            trade_lag=base_config.trade_lag,
             rebalance_every=step,
             transaction_cost_bps=base_config.transaction_cost_bps,
             min_valid_obs=base_config.min_valid_obs,
@@ -465,6 +647,8 @@ def run_cost_sweep(
             leader_frac=base_config.leader_frac,
             follower_frac=base_config.follower_frac,
             max_lag=base_config.max_lag,
+            corr_score_mode=base_config.corr_score_mode,
+            trade_lag=base_config.trade_lag,
             rebalance_every=base_config.rebalance_every,
             transaction_cost_bps=cost_bps,
             min_valid_obs=base_config.min_valid_obs,
@@ -546,6 +730,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--leader-frac", type=float, default=0.2)
     parser.add_argument("--follower-frac", type=float, default=0.2)
     parser.add_argument("--max-lag", type=int, default=5)
+    parser.add_argument(
+        "--corr-score-mode",
+        type=str,
+        default="absolute_strength",
+        choices=["absolute_strength", "signed_correlation"],
+        help="For C1/C2 only: use original signed correlation scoring or separated absolute-strength leadership scoring.",
+    )
+    parser.add_argument("--trade-lag", type=int, default=1)
     parser.add_argument("--rebalance-every", type=int, default=1)
     parser.add_argument("--transaction-cost-bps", type=float, default=0.0)
     parser.add_argument("--min-valid-obs", type=int, default=40)
@@ -564,6 +756,8 @@ def main() -> None:
         leader_frac=args.leader_frac,
         follower_frac=args.follower_frac,
         max_lag=args.max_lag,
+        corr_score_mode=args.corr_score_mode,
+        trade_lag=args.trade_lag,
         rebalance_every=args.rebalance_every,
         transaction_cost_bps=args.transaction_cost_bps,
         min_valid_obs=args.min_valid_obs,
