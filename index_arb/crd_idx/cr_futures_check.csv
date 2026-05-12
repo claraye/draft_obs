@@ -1,0 +1,35 @@
+und_bbg_index_name,und_bbg_index,index_history_start_year,ICE,CME,Eurex,ETF,CME_avg_volume,CME_contract_value,CME_avg_trading_amt,Eurex_avg_volume,Eurex_contract_value,Eurex_avg_trading_amt,ETF_avg_volume,ETF_contract_value,ETF_avg_trading_amt
+Bloomberg US Corporate / U.S. Corporate Investment Grade Index,LUACTRUU Index,1973,,IQBA Index,BBEA Index,USIG US Equity,960.8,107025,102829620,547.3,89272.5,48858839.25,2007554.75,51.21,102806878.7
+,,,,102829620,48858839.25,102806878.7,,,,,,,,,
+Bloomberg U.S. Corporate High Yield Very Liquid Index,LHVLTRUU Index,1994,,HYBA Index,BBLA Index,JNK US Equity,520.1666667,113160,58862060,299.3333333,75496,22598469.33,4091983.25,96.32,394139826.6
+,,,,58862060,22598469.33,394139826.6,,,,,,,,,
+Bloomberg U.S. Corporate Investment Grade Duration Hedged Index,I30287US Index,1999,,DHBA Index,,,1906.2,112125,213732675,,,,,,
+,,,,213732675,,,,,,,,,,,
+Bloomberg U.S. Corporate High Yield Very Liquid Duration Hedged Index,I39131US Index,2020,,DHYA Index,,,373.2333333,110295,41165770.5,,,,,,
+,,,,41165770.5,,,,,,,,,,,
+Bloomberg Emerging Market USD Sovereign and Sovereign Owned Index,I38156US Index,2019,,DLBA Index,XZSA Index,EMHC US Equity,,26324,,1377.5,26356,36305390,34050.43359,25.305,861646.2221
+,,,,,36305390,861646.2221,,,,,,,,,
+Bloomberg 1-5 Year Maturity Investment Grade Corporate Credit Index,LDC5TRUU Index,1990,,IQSA Index,,VCSH US Equity,,120290,,,,,4720709.5,79.08,373313707.3
+,,,,,,373313707.3,,,,,,,,,
+Bloomberg 5-10 Year Maturity Investment Grade Corporate Credit Index,BCR5TRUU Index,1998,,IQYA Index,,VCIT US Equity,,115950,,,,,11383251,82.71,941508690.2
+,,,,,,941508690.2,,,,,,,,,
+Bloomberg 10+ Year Maturity Investment Grade Corporate Credit Index,I13284US Index,1999,,IQLA Index,,VCLT US Equity,,60577.5,,,,,5330249.5,74.85,398969175.1
+,,,,,,398969175.1,,,,,,,,,
+Bloomberg MSCI Euro Corporate Screened Index,RECMTREU Index,2006,,,LXYA Index,SUOE LN Equity,,,,1284.933333,170200,218695653.3,89748.3,4.75,426304.425
+,,,,,218695653.3,426304.425,,,,,,,,,
+Bloomberg Liquidity Screened Euro High Yield Bond Index,BEHLTREU Index,2004,,,AHWA Index,SYBJ GY Equity,,,,1155.9,62472,72211384.8,15842.23,51.296,812643.0301
+,,,,,72211384.8,812643.0301,,,,,,,,,
+Bloomberg Sterling Liquid Corporate Index,I35357GB Index,2014,,,XZRA Index,IGCB LN Equity,,,,103.5238095,29728,3077555.81,29199.3,2366,69085543.8
+,,,,,3077555.81,69085543.8,,,,,,,,,
+Bloomberg MSCI Global Green Bond Index,GBGLTREU Index,2013,,,LXAA Index,CLIM FP Equity,,,,,125070,,2089.8,48.919,102230.9262
+,,,,,,102230.9262,,,,,,,,,
+iTraxx Europe Main Index (5Y),,2004,ITRX EUR Corp,,,,,,,,,,,,
+iTraxx Europe Crossover Index (5Y),,2004,ITRX XOVER Corp,,,,,,,,,,,,
+iTraxx Europe Senior Financials Index (5Y),,2004,ITRX SENF Corp,,,,,,,,,,,,
+iTraxx Europe Sub Financials Index (5Y),,2004,ITRX SUBF Corp,,,,,,,,,,,,
+iTraxx Asia ex-Japan Investment Grade Index (5Y),,2004,ITRX ASXJ Corp,,,,,,,,,,,,
+iTraxx Japan Investment Grade Index (5Y),,2004,ITRX JPN Corp,,,,,,,,,,,,
+iTraxx Australia Investment Grade Index (5Y),,2004,ITRX AUS Corp,,,,,,,,,,,,
+CDX North America Investment Grade Index (5Y),CDX IG CDSI GEN 5Y Corp,2003,CDX NA IG Corp,,,,,,,,,,,,
+CDX North America High Yield Index (5Y),CDX HY CDSI GEN 5Y Corp,2003,CDX NA HY Corp,,,,,,,,,,,,
+CDX Emerging Markets Index (5Y),CDX EM CDSI GEN 5Y Corp,2004,CDX EM Corp,,,,,,,,,,,,
